@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retro 3-Point Shootout</title>
+    <style>
+        /* Retro 8-bit aesthetic */
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #222;
+            font-family: 'Press Start 2P', cursive;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            color: #fff;
+            overflow: hidden;
+        }
+
+        #game-container {
+            position: relative;
+            width: 800px;
+            height: 500px;
+            background: #d2a679; /* Wooden court color */
+            border: 8px solid #333;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        /* Retro Scoreboard */
+        #scoreboard {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80%;
+            background: #111;
+            border: 4px solid #ffcc00;
+            display: flex;
+            justify-content: space-around;
+            padding: 10px;
+            box-shadow: 0 4px 0 #000;
+        }
+
+        .score-box {
+            text-align: center;
+        }
+
+        .score-label {
+            font-size: 10px;
+            color: #aaa;
+            margin-bottom: 5px;
+        }
+
+        .score-value {
+            font-size: 24px;
+            color: #ff3333;
+            text-shadow: 0 0 5px #ff0000;
+        }
+
+        /* Canvas for game elements */
+        canvas {
+            display: block;
+            background: transparent;
+        }
+
+        /* Game Over Overlay */
+        #game-over-screen {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+
+        #game-over-screen h1 {
+            color: #ff3333;
+            font-size: 36px;
+            margin-bottom: 20px;
+            text-shadow: 3px 3px 0 #000;
+        }
+
+        #final-score {
+            font-size: 18px;
+            margin-bottom: 40px;
+            color: #ffcc00;
+        }
+
+        .retro-btn {
+            background: #ffcc00;
+            color: #000;
+            border: 4px solid #fff;
+            padding: 15px 30px;
+            font-family: 'Press Start 2P', cursive;
+            font-size: 16px;
+            cursor: pointer;
+            box-shadow: 4px 4px 0 #665200;
+        }
+
+        .retro-btn:active {
+            transform: translate(2px, 2px);
+            box-shadow: 2px 2px 0 #665200;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="scoreboard">
+            <div class="score-box">
+                <div class="score-label">SCORE</div>
+                <div id="score-display" class="score-value">00</div>
+            </div>
+            <div class="score-box">
+                <div class="score-label">TIME</div>
+                <div id="time-display" class="score-value">60</div>
+            </div>
+        </div>
+
+        <canvas id="gameCanvas" width="800" height="500"></canvas>
+
+        <div id="game-over-screen">
+            <h1>TIME'S UP!</h1>
+            <div id="final-score">FINAL SCORE: 0</div>
+            <button class="retro-btn" onclick="resetGame()">PLAY AGAIN</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // UI Elements
+        const scoreDisplay = document.getElementById("score-display");
+        const timeDisplay = document.getElementById("time-display");
+        const gameOverScreen = document.getElementById("game-over-screen");
+        const finalScoreDisplay = document.getElementById("final-score");
+
+        // Game Variables
+        let score = 0;
+        let timeLeft = 30;
+        let gameInterval;
+        let isGameOver = false;
+
+        // Physics Constants
+        const gravity = 0.4;
+
+        // Basket/Hoop Properties (Increased radius for a bigger target)
+        const hoop = {
+            x: 700,
+            y: 200,
+            radius: 29, 
+            backboardX: 737,
+            backboardY: 120,
+            backboardW: 12,
+            backboardH: 100
+        };
+
+        // Ball Properties
+        const ballDefault = {
+            x: 150,
+            y: 250,
+            radius: 15,
+            vx: 0,
+            vy: 0,
+            isThrown: false,
+            isResetting: false
+        };
+        let ball = { ...ballDefault };
+
+        // Mouse Drag / Slingshot Controls
+        let mouse = { x: 0, y: 0, isDown: false };
+
+        // Event Listeners for Dragging
+        canvas.addEventListener("mousedown", (e) => {
+            if (isGameOver || ball.isThrown || ball.isResetting) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+
+            // Allow dragging if clicking close to the ball
+            const dist = Math.hypot(clickX - ball.x, clickY - ball.y);
+            if (dist < 40) {
+                mouse.isDown = true;
+            }
+        });
+
+        canvas.addEventListener("mousemove", (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = e.clientX - rect.left;
+            mouse.y = e.clientY - rect.top;
+        });
+
+        canvas.addEventListener("mouseup", () => {
+            if (!mouse.isDown) return;
+            mouse.isDown = false;
+
+            // Calculate velocity based on drag distance
+            const dx = ball.x - mouse.x;
+            const dy = ball.y - mouse.y;
+            
+            // Power multiplier
+            ball.vx = Math.min(dx * 0.15, 18); 
+            ball.vy = Math.min(dy * 0.15, 18);
+            
+            ball.isThrown = true;
+        });
+
+        // Start the Game Timer
+        function startGameTimer() {
+            gameInterval = setInterval(() => {
+                if (timeLeft > 0) {
+                    timeLeft--;
+                    timeDisplay.innerText = timeLeft < 10 ? "0" + timeLeft : timeLeft;
+                } else {
+                    endGame();
+                }
+            }, 1000);
+        }
+
+        function endGame() {
+            clearInterval(gameInterval);
+            isGameOver = true;
+            finalScoreDisplay.innerText = `FINAL SCORE: ${score}`;
+            gameOverScreen.style.display = "flex";
+        }
+
+        function resetGame() {
+            score = 0;
+            timeLeft = 60;
+            isGameOver = false;
+            scoreDisplay.innerText = "00";
+            timeDisplay.innerText = "60";
+            gameOverScreen.style.display = "none";
+            resetBall();
+            clearInterval(gameInterval);
+            startGameTimer();
+        }
+
+        function resetBall() {
+            // Positioned higher up on the court to give more drag room
+            ball.x = 120 + Math.random() * 80;
+            ball.y = 230 + Math.random() * 40;
+            ball.vx = 0;
+            ball.vy = 0;
+            ball.isThrown = false;
+            ball.isResetting = false;
+        }
+
+        // Check for Basket
+        let ballPassedThroughRim = false;
+        function checkCollision() {
+            // Backboard collision
+            if (ball.x + ball.radius > hoop.backboardX && 
+                ball.x - ball.radius < hoop.backboardX + hoop.backboardW &&
+                ball.y > hoop.backboardY && ball.y < hoop.backboardY + hoop.backboardH) {
+                ball.vx = -ball.vx * 0.5; // Bounce off backboard
+                ball.x = hoop.backboardX - ball.radius;
+            }
+
+            // Simple Rim Net Check (Top of the hoop rim)
+            const rimLeft = hoop.x - hoop.radius;
+            const rimRight = hoop.x + hoop.radius;
+            
+            // Check if ball passes downward through the hoop cylinder area
+            if (ball.vy > 0 && 
+                ball.x > rimLeft && ball.x < rimRight && 
+                ball.y > hoop.y - 12 && ball.y < hoop.y + 12) {
+                if (!ballPassedThroughRim) {
+                    score += 3; // 3 pointer!
+                    scoreDisplay.innerText = score < 10 ? "0" + score : score;
+                    ballPassedThroughRim = true;
+                }
+            }
+        }
+
+        // Render Functions
+        function drawCourt() {
+            // 3-Point Arc
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.arc(800, 250, 500, Math.PI * 0.5, Math.PI * 1.5);
+            ctx.stroke();
+
+            // Key/Paint area
+            ctx.fillStyle = "#b08257";
+            ctx.fillRect(500, 120, 300, 260);
+            ctx.strokeRect(500, 120, 300, 260);
+
+            // Floor Lines
+            ctx.beginPath();
+            ctx.moveTo(0, 450); ctx.lineTo(800, 450);
+            ctx.stroke();
+
+            // Backboard and Support structure
+            ctx.fillStyle = "#555";
+            ctx.fillRect(745, 220, 15, 230); // Main post
+
+            ctx.fillStyle = "#fff";
+            ctx.fillRect(hoop.backboardX, hoop.backboardY, hoop.backboardW, hoop.backboardH); // Board
+            ctx.strokeStyle = "#ff3333";
+            ctx.strokeRect(hoop.backboardX, hoop.backboardY + 35, hoop.backboardW, 40); // Inner square
+
+            // Hoop Rim (Wider base)
+            ctx.strokeStyle = "#ff6600";
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.moveTo(hoop.x - hoop.radius, hoop.y);
+            ctx.lineTo(hoop.x + hoop.radius, hoop.y);
+            ctx.stroke();
+
+            // Net mesh lines (Stretched to match wide rim)
+            ctx.strokeStyle = "rgba(255,255,255,0.7)";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(hoop.x - hoop.radius, hoop.y);
+            ctx.lineTo(hoop.x - 18, hoop.y + 45);
+            ctx.lineTo(hoop.x + 18, hoop.y + 45);
+            ctx.lineTo(hoop.x + hoop.radius, hoop.y);
+            ctx.stroke();
+        }
+
+        function drawBall() {
+            ctx.fillStyle = "#e65c00"; 
+            ctx.beginPath();
+            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "#000";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Retro lines on basketball
+            ctx.beginPath();
+            ctx.arc(ball.x, ball.y, ball.radius, Math.PI * 0.5, Math.PI * 1.5);
+            ctx.stroke();
+        }
+
+        function drawAimLine() {
+            if (!mouse.isDown) return;
+
+            // Visual guide trajectory dots
+            ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+            let simX = ball.x;
+            let simY = ball.y;
+            let simVx = Math.min((ball.x - mouse.x) * 0.15, 18);
+            let simVy = Math.min((ball.y - mouse.y) * 0.15, 18);
+
+            for (let i = 0; i < 35; i++) {
+                simX += simVx;
+                simY += simVy;
+                simVy += gravity;
+                if (i % 3 === 0) {
+                    ctx.beginPath();
+                    ctx.arc(simX, simY, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // Drag indicator line
+            ctx.strokeStyle = "#ffcc00";
+            ctx.lineWidth = 3;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(ball.x, ball.y);
+            ctx.lineTo(mouse.x, mouse.y);
+            ctx.stroke();
+            ctx.setLineDash([]); 
+        }
+
+        // Main Game Loop
+        function update() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            drawCourt();
+
+            if (!isGameOver) {
+                if (ball.isThrown) {
+                    ball.x += ball.vx;
+                    ball.y += ball.vy;
+                    ball.vy += gravity;
+
+                    checkCollision();
+
+                    if (ball.y > canvas.height + 20 || ball.x > canvas.width + 20 || ball.x < -20) {
+                        ball.isResetting = true;
+                        ball.isThrown = false;
+                        ballPassedThroughRim = false;
+                        setTimeout(resetBall, 300); 
+                    }
+                }
+
+                drawAimLine();
+            }
+
+            drawBall();
+            requestAnimationFrame(update);
+        }
+
+        // Initialization
+        resetBall();
+        startGameTimer();
+        update();
+    </script>
+</body>
+</html>
